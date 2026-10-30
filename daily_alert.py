@@ -15,12 +15,15 @@ DEFAULT_META = {
 def fetch_vni_drawdown():
     end_ts = int(datetime.now().timestamp())
     start_ts = int((datetime.now() - timedelta(days=120)).timestamp())
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    # Luồng 1: DNSE Index API (/ohlcs/index)
     try:
-        url = f"https://services.entrade.com.vn/chart-api/v2/ohlcs/stock?from={start_ts}&to={end_ts}&symbol=VNINDEX&resolution=1D"
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        url = f"https://services.entrade.com.vn/chart-api/v2/ohlcs/index?from={start_ts}&to={end_ts}&symbol=VNINDEX&resolution=1D"
+        resp = requests.get(url, headers=headers, timeout=8)
         if resp.status_code == 200:
             data = resp.json()
-            if data and "t" in data and len(data["t"]) > 0:
+            if data and "t" in data and len(data["t"]) > 5:
                 df = pd.DataFrame({
                     "time": pd.to_datetime(data["t"], unit="s"),
                     "high": pd.to_numeric(data["h"]),
@@ -32,8 +35,33 @@ def fetch_vni_drawdown():
                 peak_3m = float(df["high"].tail(63).max())
                 drawdown = ((curr - peak_3m) / peak_3m) * 100
                 return curr, chg_1d, peak_3m, drawdown
+    except Exception:
+        pass
+
+    # Luồng 2: CafeF API
+    try:
+        url_cf = "https://s.cafef.vn/Ajax/PageNew/DataHistory/PriceHistory.ashx?Symbol=VNINDEX&StartDate=&EndDate=&PageIndex=1&PageSize=90"
+        resp_cf = requests.get(url_cf, headers=headers, timeout=8)
+        if resp_cf.status_code == 200:
+            records = resp_cf.json().get("Data", {}).get("Data", [])
+            if records and len(records) > 5:
+                rows = []
+                for r in records:
+                    dt = pd.to_datetime(r["Ngay"], format="%d/%m/%Y", errors="coerce")
+                    c_val = float(r.get("GiaDongCua", 0))
+                    h_val = float(r.get("GiaCaoNhat", c_val))
+                    if c_val > 0 and pd.notna(dt):
+                        rows.append({"time": dt, "high": h_val, "close": c_val})
+                df = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
+                curr = float(df["close"].iloc[-1])
+                prev = float(df["close"].iloc[-2]) if len(df) > 1 else curr
+                chg_1d = ((curr - prev) / prev) * 100
+                peak_3m = float(df["high"].tail(63).max())
+                drawdown = ((curr - peak_3m) / peak_3m) * 100
+                return curr, chg_1d, peak_3m, drawdown
     except Exception as e:
         print(f"Lỗi lấy dữ liệu VN-Index: {e}")
+
     return None, 0.0, None, 0.0
 
 def scan_valuation_triggers():
