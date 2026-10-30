@@ -44,9 +44,9 @@ DEFAULT_ROADMAP = [
     {"id": "step_3", "time": "Tháng 10 - 11/2026 (Khởi động)", "task": "Kích hoạt Liên kết nguồn tiền TK Techcombank (*9013) vào Sức mua cổ phiếu trên TCInvest", "done": True},
     {"id": "step_4", "time": "Tháng 10 - 11/2026 (Khởi động)", "task": "Kiểm tra Bán nháp 119,15 CCQ TCBF để xác nhận số lượng CCQ được miễn 100% phí bán (FIFO)", "done": True},
     {"id": "step_5", "time": "Hàng tháng (Từ Tháng 11/2026)", "task": "Kỷ luật 80/20: Mua 300.000đ TCBF/tháng + Giữ 1.200.000đ trong TK Techcombank Sinh lời tự động", "done": False},
-    {"id": "step_6", "time": "Tháng 12/2026 (Đợt mua Lô chẵn 1)", "task": "Gom đủ ~2,6 - 2,8 triệu (2 tháng + 200k TCFF): Đặt lệnh mua 100 cổ phiếu HPG bổ sung ngành Sản xuất", "done": False},
-    {"id": "step_7", "time": "Tháng 02/2027 (Đợt mua Lô chẵn 2)", "task": "Gom đủ ~3,2 triệu: Mua 100 CCQ FUEVFVND trên bảng giá CP (sở hữu FPT, MWG, PNJ với phí 0,8%/năm)", "done": False},
-    {"id": "step_8", "time": "Tháng 04/2027 (Đợt mua Lô chẵn 3)", "task": "Gom đủ ~2,5 triệu: Mua 100 cổ phiếu ACB hoặc MBB để đón mùa chia cổ tức tiền mặt tháng 5-8", "done": False},
+    {"id": "step_6", "time": "Tháng 12/2026 (Đợt mua Lô chẵn 1)", "task": "Gom đủ ~2,1 - 2,6 triệu: Đặt lệnh mua 100 cổ phiếu HPG bổ sung ngành Sản xuất", "done": False},
+    {"id": "step_7", "time": "Tháng 02/2027 (Đợt mua Lô chẵn 2)", "task": "Gom đủ ~3,17 triệu: Mua 100 CCQ FUEVFVND trên bảng giá CP (sở hữu FPT, MWG, PNJ với phí 0,8%/năm)", "done": False},
+    {"id": "step_8", "time": "Tháng 04/2027 (Đợt mua Lô chẵn 3)", "task": "Gom đủ ~1,93 - 2,1 triệu: Mua 100 cổ phiếu ACB hoặc MBB để đón mùa chia cổ tức tiền mặt tháng 5-8", "done": False},
     {"id": "step_9", "time": "Tháng 05 - 08 Hàng Năm (Mùa cổ tức)", "task": "Gộp tiền cổ tức thực nhận (TCB, ACB, MBB, HPG) với tiền nộp tháng để rút ngắn chu kỳ mua thêm 1 lô chẵn", "done": False},
     {"id": "step_10", "time": "Cuối Tháng 1, 4, 7, 10 Hàng Năm", "task": "Dành 3 phút trên TCInvest kiểm tra Nợ xấu (<2,2%) của TCB/ACB/MBB và Biên lãi gộp của HPG", "done": False},
     {"id": "step_11", "time": "Bất cứ khi nào VN-Index giảm > 10%", "task": "Ứng tiền TK Techcombank mua ngay 1 lô chẵn giá đỏ trong phiên + Bấm bán lô TCBF cũ trước 14h30 cùng ngày", "done": False},
@@ -62,7 +62,6 @@ DEFAULT_TRANSACTIONS = [
 CHECKLIST_FILE = "roadmap_progress.json"
 TX_FILE = "transactions_log.json"
 
-# Siêu dữ liệu & Ngưỡng quy chiếu Định giá chuẩn cho cả Cổ phiếu, ETF và Quỹ mở
 ASSET_VALUATION_META = {
     "TCB": {
         "name": "Techcombank", "category": "BANK", "group": "Cổ phiếu Ngân hàng",
@@ -248,19 +247,27 @@ def save_transactions_data(tx_list):
     return False
 
 # ==========================================
-# 3. HÀM LẤY GIÁ & CHỈ SỐ ĐỊNH GIÁ P/B, P/E, ROE TỪ API TCBS/ENTRADE
+# 3. HÀM LẤY GIÁ ĐA LUỒNG CHUẨN XÁC (PHÂN BIỆT INDEX VÀ STOCK)
 # ==========================================
 @st.cache_data(ttl=300)
 def fetch_price_history(symbol: str, days: int = 365) -> pd.DataFrame:
+    """
+    Tự động phân luồng:
+    - Nếu là VNINDEX / VN30: Gọi cổng 'ohlcs/index' của DNSE -> Dự phòng cổng CafeF -> Dự phòng VNDirect.
+    - Nếu là Cổ phiếu / ETF: Gọi cổng 'ohlcs/stock' của DNSE -> Dự phòng cổng CafeF.
+    """
     end_ts = int(datetime.now().timestamp())
     start_ts = int((datetime.now() - timedelta(days=days)).timestamp())
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+    # LUỒNG 1: Cổng API DNSE (Tách riêng đường dẫn 'index' cho VNINDEX và 'stock' cho Cổ phiếu)
+    endpoint_type = "index" if symbol in ["VNINDEX", "VN30", "HNX", "UPCOM"] else "stock"
     try:
-        url = f"https://services.entrade.com.vn/chart-api/v2/ohlcs/stock?from={start_ts}&to={end_ts}&symbol={symbol}&resolution=1D"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=8)
+        url_dnse = f"https://services.entrade.com.vn/chart-api/v2/ohlcs/{endpoint_type}?from={start_ts}&to={end_ts}&symbol={symbol}&resolution=1D"
+        resp = requests.get(url_dnse, headers=headers, timeout=6)
         if resp.status_code == 200:
             data = resp.json()
-            if data and "t" in data and len(data["t"]) > 0:
+            if data and "t" in data and len(data["t"]) > 5:
                 df = pd.DataFrame({
                     "time": pd.to_datetime(data["t"], unit="s"),
                     "open": pd.to_numeric(data["o"]),
@@ -269,34 +276,74 @@ def fetch_price_history(symbol: str, days: int = 365) -> pd.DataFrame:
                     "close": pd.to_numeric(data["c"]),
                     "volume": pd.to_numeric(data["v"])
                 }).sort_values("time").reset_index(drop=True)
-                if symbol != "VNINDEX" and df["close"].iloc[-1] < 500:
+                if endpoint_type == "stock" and df["close"].iloc[-1] < 500:
                     for col in ["open", "high", "low", "close"]:
                         df[col] = df[col] * 1000
                 return df
     except Exception:
         pass
 
-    np.random.seed(abs(hash(symbol)) % (10**6))
-    dates = pd.date_range(end=datetime.now(), periods=int(days * 0.7), freq="B")
+    # LUỒNG 2: Cổng API CafeF Real-time (Không bao giờ chặn IP quốc tế của Streamlit Cloud)
+    try:
+        url_cafef = f"https://s.cafef.vn/Ajax/PageNew/DataHistory/PriceHistory.ashx?Symbol={symbol}&StartDate=&EndDate=&PageIndex=1&PageSize=150"
+        resp_cf = requests.get(url_cafef, headers=headers, timeout=6)
+        if resp_cf.status_code == 200:
+            js_cf = resp_cf.json()
+            records = js_cf.get("Data", {}).get("Data", [])
+            if records and len(records) > 5:
+                rows_cf = []
+                for r in records:
+                    dt = pd.to_datetime(r["Ngay"], format="%d/%m/%Y", errors="coerce")
+                    c_val = float(r.get("GiaDongCua", 0))
+                    o_val = float(r.get("GiaMoCua", c_val))
+                    h_val = float(r.get("GiaCaoNhat", c_val))
+                    l_val = float(r.get("GiaThapNhat", c_val))
+                    v_val = float(r.get("KhoiLuongKhopLenh", 0))
+                    if endpoint_type == "stock" and c_val < 500:
+                        c_val, o_val, h_val, l_val = c_val * 1000, o_val * 1000, h_val * 1000, l_val * 1000
+                    if c_val > 0 and pd.notna(dt):
+                        rows_cf.append({"time": dt, "open": o_val, "high": h_val, "low": l_val, "close": c_val, "volume": v_val})
+                if rows_cf:
+                    return pd.DataFrame(rows_cf).sort_values("time").reset_index(drop=True)
+    except Exception:
+        pass
+
+    # LUỒNG 3: Cổng API VNDirect Dchart
+    try:
+        url_vnd = f"https://dchart-api.vndirect.com.vn/dchart/history?resolution=D&symbol={symbol}&from={start_ts}&to={end_ts}"
+        resp_vnd = requests.get(url_vnd, headers=headers, timeout=6)
+        if resp_vnd.status_code == 200:
+            d_vnd = resp_vnd.json()
+            if d_vnd and "t" in d_vnd and len(d_vnd["t"]) > 5:
+                df = pd.DataFrame({
+                    "time": pd.to_datetime(d_vnd["t"], unit="s"),
+                    "open": pd.to_numeric(d_vnd["o"]),
+                    "high": pd.to_numeric(d_vnd["h"]),
+                    "low": pd.to_numeric(d_vnd["l"]),
+                    "close": pd.to_numeric(d_vnd["c"]),
+                    "volume": pd.to_numeric(d_vnd["v"])
+                }).sort_values("time").reset_index(drop=True)
+                if endpoint_type == "stock" and df["close"].iloc[-1] < 500:
+                    for col in ["open", "high", "low", "close"]:
+                        df[col] = df[col] * 1000
+                return df
+    except Exception:
+        pass
+
+    # LUỒNG 4: Dự phòng cuối cùng nếu đứt toàn bộ kết nối mạng
+    dates = pd.date_range(end=datetime.now(), periods=100, freq="B")
     base_prices = {
-        "VNINDEX": 1285.0, "TCB": 22350.0, "HPG": 27200.0,
-        "MBB": 24800.0, "ACB": 25600.0, "FUEVFVND": 32800.0, "E1VFVN30": 23500.0,
+        "VNINDEX": 1265.0, "TCB": 21600.0, "HPG": 21000.0,
+        "MBB": 19300.0, "ACB": 21000.0, "FUEVFVND": 31700.0, "E1VFVN30": 33600.0,
     }
-    target_last = base_prices.get(symbol, 25000.0)
-    returns = np.random.normal(0.0004, 0.014, size=len(dates))
-    price_path = target_last * np.exp(np.cumsum(returns) - np.sum(returns))
+    p_base = base_prices.get(symbol, 21000.0)
     return pd.DataFrame({
-        "time": dates,
-        "open": price_path * (1 - np.random.uniform(0, 0.008, len(dates))),
-        "high": price_path * (1 + np.random.uniform(0, 0.015, len(dates))),
-        "low": price_path * (1 - np.random.uniform(0, 0.015, len(dates))),
-        "close": price_path,
-        "volume": np.random.randint(1500000, 25000000, len(dates))
+        "time": dates, "open": p_base, "high": p_base * 1.01,
+        "low": p_base * 0.99, "close": p_base, "volume": 10000000
     })
 
 @st.cache_data(ttl=1800)
 def fetch_live_valuation(symbol: str) -> tuple[float, float, float]:
-    """Lấy P/B, P/E, ROE thời gian thực từ API TCBS, dự phòng về thông số chuẩn nếu nghẽn mạng."""
     meta = ASSET_VALUATION_META.get(symbol, {})
     def_pb = meta.get("default_pb", 1.5)
     def_pe = meta.get("default_pe", 10.0)
@@ -323,14 +370,10 @@ def fetch_live_valuation(symbol: str) -> tuple[float, float, float]:
 # 4. BỘ MÁY QUY CHIẾU NGƯỠNG MUA TÍCH SẢN & BÁN CHỐT LỜI TỰ ĐỘNG
 # ==========================================
 def evaluate_valuation_signal(ticker: str, pb: float, pe: float, roe: float, vni_drawdown: float) -> dict:
-    """
-    Áp dụng chính xác 'Bảng quy chiếu ngưỡng Mua Tích Sản và Bán Chốt Lời'
-    cho từng nhóm tài sản (Ngân hàng, Sản xuất chu kỳ, Quỹ ETF và Quỹ mở).
-    """
     meta = ASSET_VALUATION_META[ticker]
     cat = meta["category"]
 
-    if cat == "BANK":  # TCB, ACB, MBB
+    if cat == "BANK":
         if pb > meta["sell_pb"]:
             return {
                 "zone": "🔴 ĐẮT (Vượt P/B > 2.2)",
@@ -366,7 +409,7 @@ def evaluate_valuation_signal(ticker: str, pb: float, pe: float, roe: float, vni
             "score_bonus": 0
         }
 
-    elif cat == "CYCLE":  # HPG (Sản xuất chu kỳ)
+    elif cat == "CYCLE":
         if pb > meta["sell_pb"]:
             return {
                 "zone": "🔴 ĐẮT (Đỉnh chu kỳ P/B > 2.5)",
@@ -395,7 +438,7 @@ def evaluate_valuation_signal(ticker: str, pb: float, pe: float, roe: float, vni
             "score_bonus": 5
         }
 
-    elif cat == "ETF":  # FUEVFVND, E1VFVN30
+    elif cat == "ETF":
         if pe > 22.0 or pb > meta["sell_pb"]:
             return {
                 "zone": "🔴 ĐẮT (P/E rổ > 22)",
@@ -417,7 +460,7 @@ def evaluate_valuation_signal(ticker: str, pb: float, pe: float, roe: float, vni
             "score_bonus": 22
         }
 
-    elif cat == "MUTUAL_EQ":  # TCEF
+    elif cat == "MUTUAL_EQ":
         if pb > meta["sell_pb"] or pe > 22.0:
             return {
                 "zone": "🔴 ĐỊNH GIÁ THỊ TRƯỜNG CAO",
@@ -432,7 +475,7 @@ def evaluate_valuation_signal(ticker: str, pb: float, pe: float, roe: float, vni
             "score_bonus": -10
         }
 
-    elif cat == "MUTUAL_BOND":  # TCBF
+    elif cat == "MUTUAL_BOND":
         if vni_drawdown <= -10.0:
             return {
                 "zone": "🚨 KÍCH HOẠT KHO ĐẠN FIFO",
@@ -447,7 +490,7 @@ def evaluate_valuation_signal(ticker: str, pb: float, pe: float, roe: float, vni
             "score_bonus": 15
         }
 
-    else:  # TCFF
+    else:
         return {
             "zone": "🟠 CẦN TÁI CƠ CẤU GỌN",
             "action": "BÁN 100% (12,72 CCQ ~ 200.000Đ)",
@@ -533,7 +576,6 @@ def send_zalo_notification(message_text: str, bot_token: str = "", user_id: str 
             return False, f"Lỗi gọi Webhook: {str(e)}"
     return False, "Chưa cấu hình Zalo Bot Token hoặc Webhook URL."
 
-# Khởi tạo State
 if "tx_state" not in st.session_state:
     tx_data, tx_sync_msg = load_transactions_data()
     st.session_state.tx_state = tx_data
@@ -559,7 +601,7 @@ with st.sidebar:
     sim_pb_shift = st.slider(
         "Giả lập biến động P/B toàn thị trường (+/-)",
         min_value=-0.5, max_value=1.2, value=0.0, step=0.1,
-        help="Kéo lên +0.9 để xem App tự động phát lệnh BÁN CHỐT LỜI khi P/B vượt 2.2 - 2.5, hoặc kéo xuống -0.3 để xem lệnh GOM MẠNH!"
+        help="Để ở 0.0 để xem P/B thật. Kéo lên +0.9 để test lệnh BÁN CHỐT LỜI khi P/B vượt 2.2 - 2.5!"
     )
 
     st.divider()
@@ -572,7 +614,7 @@ with st.sidebar:
     zalo_user_id = st.text_input("Zalo Chat/User ID của bạn", value=default_user_id)
     zalo_webhook = st.text_input("Hoặc Zalo Webhook URL", value=default_webhook)
 
-# Tính toán VN-Index
+# Tính toán VN-Index từ API thực tế đa luồng
 df_vni = fetch_price_history("VNINDEX", days=365)
 vni_current = float(df_vni["close"].iloc[-1])
 
@@ -591,7 +633,6 @@ peak_3m = float(df_vni["high"].tail(63).max())
 actual_drawdown = ((vni_current - peak_3m) / peak_3m) * 100
 effective_drawdown = sim_drop if sim_drop != 0.0 else actual_drawdown
 
-# Tổng hợp dữ liệu Định giá P/B, P/E, ROE và Tín hiệu tự động cho cả 9 mã (6 CP/ETF + 3 Quỹ mở)
 market_prices_map = {
     "TCEF": 20459.69,
     "TCBF": 21149.81,
@@ -613,7 +654,6 @@ for ticker, meta in ASSET_VALUATION_META.items():
         lot_cost = curr_p * 100
 
     live_pb, live_pe, live_roe = fetch_live_valuation(ticker)
-    # Áp dụng độ lệch giả lập nếu người dùng kéo thanh trượt test ngưỡng Mua/Bán
     eff_pb = round(max(0.5, live_pb + (sim_pb_shift if ticker not in ["TCBF", "TCFF"] else 0.0)), 2)
     eff_pe = round(max(3.0, live_pe * (eff_pb / live_pb)), 1) if live_pb > 0 else live_pe
 
@@ -644,7 +684,6 @@ live_total_value = df_portfolio_live["Giá Trị Hiện Tại (₫)"].sum() if n
 live_total_cost = df_portfolio_live["Tổng Vốn Gốc (₫)"].sum() if not df_portfolio_live.empty else 11089342.0
 live_total_pnl = live_total_value - live_total_cost
 
-# Lọc các tín hiệu MUA RẺ và BÁN CHỐT LỜI đang kích hoạt để đưa lên Banner & Zalo
 buy_triggers = [r["Mã"] for r in all_assets_rows if "GOM MẠNH" in r["Lệnh Đề Xuất Tự Động"]]
 sell_triggers = [f"{r['Mã']} ({r['Lệnh Đề Xuất Tự Động']})" for r in all_assets_rows if "BÁN" in r["Lệnh Đề Xuất Tự Động"]]
 
@@ -723,13 +762,8 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "✅ 5. Lộ Trình & Checklist (Lưu Sheet 1)"
 ])
 
-# ------------------------------------------
-# TAB 1: BẢNG QUY CHIẾU ĐỊNH GIÁ P/B, P/E, ROE CHO CẢ CP, ETF VÀ QUỸ MỞ
-# ------------------------------------------
 with tab1:
     st.subheader("🎯 Bảng Theo Dõi Định Giá (P/B, P/E, ROE) & Tín Hiệu Mua/Bán Tự Động (Cổ Phiếu + ETF + Quỹ Mở)")
-    st.caption("Mẹo: Bạn có thể kéo thanh trượt 'Giả lập biến động P/B' ở thanh bên trái để kiểm tra cách App tự động đổi lệnh từ GOM MẠNH sang CHỐT LỜI 50%.")
-
     st.dataframe(
         df_all_valuation[[
             "Mã", "Tên Cổ Phiếu / Quỹ", "Phân Nhóm", "Thị Giá / NAV (₫)",
@@ -759,7 +793,7 @@ with tab1:
     with col_chart_left:
         selected_ticker = st.selectbox(
             "Chọn mã để xem Biểu đồ kỹ thuật & Đường trung bình MA20 / MA50:",
-            options=["VNINDEX", "TCB", "HPG", "MBB", "ACB", "FUEVFVND", "E1VFVN30"], index=1
+            options=["VNINDEX", "TCB", "HPG", "MBB", "ACB", "FUEVFVND", "E1VFVN30"], index=0
         )
         df_chart = fetch_price_history(selected_ticker, days=250)
         df_chart["MA20"] = df_chart["close"].rolling(20).mean()
@@ -787,9 +821,6 @@ with tab1:
         fig_pb.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig_pb, use_container_width=True)
 
-# ------------------------------------------
-# TAB 2: MÁY TRẠM ĐỀ XUẤT MUA/BÁN TỰ ĐỘNG THEO ĐỊNH GIÁ & NGÂN SÁCH
-# ------------------------------------------
 with tab2:
     st.subheader("🤖 Đề Xuất Hành Động Mua / Bán Tự Động Trong Tháng Này")
     monthly_tcbf_alloc = monthly_budget * (tcbf_ratio / 100.0)
@@ -818,7 +849,7 @@ with tab2:
     for r in all_assets_rows:
         ticker = r["Mã"]
         if ticker in ["TCB", "TCEF", "TCBF", "TCFF"]:
-            continue  # TCB đã chiếm 44.9%, TCEF dừng mua mới, TCBF mua cố định 300k/tháng
+            continue
         lot_cost = r["Vốn 1 Lô Chẵn / Đợt (₫)"]
         diff = available_lot_cash - lot_cost
         can_buy_now = diff >= 0
@@ -846,9 +877,6 @@ with tab2:
         use_container_width=True, hide_index=True
     )
 
-# ------------------------------------------
-# TAB 3: QUẢN TRỊ DANH MỤC 14,93 TRIỆU KÈM TÍN HIỆU ĐỊNH GIÁ
-# ------------------------------------------
 with tab3:
     st.subheader("💼 Bảng Cân Đối Danh Mục Thực Tế (Tích Hợp P/B, P/E, ROE & Cảnh Báo Chốt Lời Tự Động)")
     p_left, p_right = st.columns([3, 2])
@@ -883,9 +911,6 @@ with tab3:
         fig_pie.update_layout(height=360, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig_pie, use_container_width=True)
 
-# ------------------------------------------
-# TAB 4: NHẬT KÝ GIAO DỊCH (SHEET 2)
-# ------------------------------------------
 with tab4:
     st.subheader("📝 Ghi Nhật Ký Mua / Bán Cổ Phiếu & Quỹ Mở (Tự Động Đồng Bộ Google Sheets - Sheet 2)")
     st.caption(f"Trạng thái kết nối Sổ cái Giao dịch: **{st.session_state.get('tx_sync_msg', '')}**")
@@ -900,7 +925,7 @@ with tab4:
             tx_ticker = st.selectbox("Mã CK / Quỹ", ["HPG", "FUEVFVND", "ACB", "MBB", "TCBF", "E1VFVN30", "TCB", "TCEF", "TCFF"])
             tx_type = st.selectbox("Nhóm tài sản", ["Cổ phiếu trực tiếp", "Quỹ ETF Tăng trưởng", "Quỹ mở trái phiếu", "Quỹ mở cổ phiếu", "Quỹ mở ngắn hạn"])
         with f_col3:
-            default_p = float(market_prices_map.get(tx_ticker, 25000.0))
+            default_p = float(market_prices_map.get(tx_ticker, 21000.0))
             tx_qty = st.number_input("Số lượng (CP / CCQ)", min_value=0.01, max_value=100000.0, value=100.0, step=10.0)
             tx_price = st.number_input("Giá khớp lệnh / NAV (₫)", min_value=100.0, max_value=500000.0, value=default_p, step=100.0)
         with f_col4:
@@ -937,9 +962,6 @@ with tab4:
             use_container_width=True, hide_index=True
         )
 
-# ------------------------------------------
-# TAB 5: LỘ TRÌNH & CHECKLIST (SHEET 1)
-# ------------------------------------------
 with tab5:
     st.subheader("✅ Bảng Lộ Trình Chi Tiết & Checklist Thực Thi (Đồng bộ Google Sheets - Sheet 1)")
     st.caption(f"Trạng thái lưu trữ: **{st.session_state.get('rm_sync_msg', '')}**")
