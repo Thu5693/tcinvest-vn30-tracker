@@ -2,9 +2,8 @@ name: Daily VN-Index 14h15 Zalo Alert
 
 on:
   schedule:
-    # 07:15 UTC = 14:15 Giờ Việt Nam (Chạy từ Thứ Hai đến Thứ Sáu)
     - cron: '15 7 * * 1-5'
-  workflow_dispatch: # Cho phép bấm nút chạy thử ngay lập tức trên web GitHub
+  workflow_dispatch:
 
 jobs:
   check_market_and_notify:
