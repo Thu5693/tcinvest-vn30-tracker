@@ -4,22 +4,27 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 def fetch_vni_drawdown():
-    """Lấy điểm số VN-Index hiện tại và tính mức sụt giảm từ đỉnh 3 tháng gần nhất."""
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d")
+    """Lấy điểm số VN-Index trực tiếp từ API chứng khoán qua requests, không cần vnstock3."""
+    end_ts = int(datetime.now().timestamp())
+    start_ts = int((datetime.now() - timedelta(days=120)).timestamp())
     try:
-        from vnstock3 import Vnstock
-        stock = Vnstock().stock(symbol="VNINDEX", source="TCBS")
-        df = stock.quote.history(start=start_date, end=end_date, interval="1D")
-        if df is not None and not df.empty:
-            df["time"] = pd.to_datetime(df["time"])
-            df = df.sort_values("time").reset_index(drop=True)
-            curr = float(df["close"].iloc[-1])
-            prev = float(df["close"].iloc[-2]) if len(df) > 1 else curr
-            chg_1d = ((curr - prev) / prev) * 100
-            peak_3m = float(df["high"].tail(63).max())
-            drawdown = ((curr - peak_3m) / peak_3m) * 100
-            return curr, chg_1d, peak_3m, drawdown
+        url = f"https://services.entrade.com.vn/chart-api/v2/ohlcs/stock?from={start_ts}&to={end_ts}&symbol=VNINDEX&resolution=1D"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data and "t" in data and len(data["t"]) > 0:
+                df = pd.DataFrame({
+                    "time": pd.to_datetime(data["t"], unit="s"),
+                    "high": pd.to_numeric(data["h"]),
+                    "close": pd.to_numeric(data["c"])
+                }).sort_values("time").reset_index(drop=True)
+                curr = float(df["close"].iloc[-1])
+                prev = float(df["close"].iloc[-2]) if len(df) > 1 else curr
+                chg_1d = ((curr - prev) / prev) * 100
+                peak_3m = float(df["high"].tail(63).max())
+                drawdown = ((curr - peak_3m) / peak_3m) * 100
+                return curr, chg_1d, peak_3m, drawdown
     except Exception as e:
         print(f"Lỗi lấy dữ liệu VN-Index: {e}")
     return None, 0.0, None, 0.0
@@ -64,7 +69,6 @@ if __name__ == "__main__":
         )
         send_zalo(msg)
     else:
-        # Gửi báo cáo tóm tắt nhẹ nhàng vào chiều Thứ Sáu hàng tuần (weekday == 4)
         if (datetime.utcnow() + timedelta(hours=7)).weekday() == 4:
             msg = (
                 f"✅ [TỔNG KẾT TUẦN 14h15 - {now_str}]\n"
