@@ -1,1 +1,31 @@
+name: Daily VN-Index 14h15 Zalo Alert
 
+on:
+  schedule:
+    # 07:15 UTC = 14:15 Giờ Việt Nam (Chạy từ Thứ Hai đến Thứ Sáu)
+    - cron: '15 7 * * 1-5'
+  workflow_dispatch: # Cho phép bấm nút chạy thử ngay lập tức trên web GitHub
+
+jobs:
+  check_market_and_notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install vnstock3 pandas requests
+
+      - name: Run 14h15 Market Check & Send Zalo
+        env:
+          ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN }}
+          ZALO_USER_ID: ${{ secrets.ZALO_USER_ID }}
+          ZALO_WEBHOOK_URL: ${{ secrets.ZALO_WEBHOOK_URL }}
+        run: python daily_alert.py
