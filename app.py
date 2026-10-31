@@ -44,8 +44,8 @@ DEFAULT_ROADMAP = [
     {"id": "step_3", "time": "Tháng 10 - 11/2026 (Khởi động)", "task": "Kích hoạt Liên kết nguồn tiền TK Techcombank (*9013) vào Sức mua cổ phiếu trên TCInvest", "done": True},
     {"id": "step_4", "time": "Tháng 10 - 11/2026 (Khởi động)", "task": "Kiểm tra Bán nháp 119,15 CCQ TCBF để xác nhận số lượng CCQ được miễn 100% phí bán (FIFO)", "done": True},
     {"id": "step_5", "time": "Hàng tháng (Từ Tháng 11/2026)", "task": "Kỷ luật 80/20: Mua 300.000đ TCBF/tháng + Giữ 1.200.000đ trong TK Techcombank Sinh lời tự động", "done": False},
-    {"id": "step_6", "time": "Tháng 12/2026 (Đợt mua Lô chẵn 1)", "task": "Gom đủ ~2,1 - 2,6 triệu: Đặt lệnh mua 100 cổ phiếu HPG bổ sung ngành Sản xuất", "done": False},
-    {"id": "step_7", "time": "Tháng 02/2027 (Đợt mua Lô chẵn 2)", "task": "Gom đủ ~3,17 triệu: Mua 100 CCQ FUEVFVND trên bảng giá CP (sở hữu FPT, MWG, PNJ với phí 0,8%/năm)", "done": False},
+    {"id": "step_6", "time": "Tháng 11 - 12/2026 (Đợt mua Lô chẵn 1)", "task": "Gom đủ ~2,1 triệu: Đặt lệnh mua trước 100 cổ phiếu HPG bổ sung ngành Sản xuất", "done": False},
+    {"id": "step_7", "time": "Tháng 01 - 02/2027 (Đợt mua Lô chẵn 2)", "task": "Gom đủ ~3,17 triệu: Mua 100 CCQ FUEVFVND trên bảng giá CP (sở hữu FPT, MWG, PNJ với phí 0,8%/năm)", "done": False},
     {"id": "step_8", "time": "Tháng 04/2027 (Đợt mua Lô chẵn 3)", "task": "Gom đủ ~1,93 - 2,1 triệu: Mua 100 cổ phiếu ACB hoặc MBB để đón mùa chia cổ tức tiền mặt tháng 5-8", "done": False},
     {"id": "step_9", "time": "Tháng 05 - 08 Hàng Năm (Mùa cổ tức)", "task": "Gộp tiền cổ tức thực nhận (TCB, ACB, MBB, HPG) với tiền nộp tháng để rút ngắn chu kỳ mua thêm 1 lô chẵn", "done": False},
     {"id": "step_10", "time": "Cuối Tháng 1, 4, 7, 10 Hàng Năm", "task": "Dành 3 phút trên TCInvest kiểm tra Nợ xấu (<2,2%) của TCB/ACB/MBB và Biên lãi gộp của HPG", "done": False},
@@ -225,7 +225,7 @@ def load_transactions_data():
                 return json.load(f), "🟡 Lưu cục bộ (transactions_log.json)"
         except Exception:
             pass
-    return DEFAULT_TRANSACTIONS, "🟡 Lưu cục bộ (transactions_log.json)"
+    return [dict(x) for x in DEFAULT_TRANSACTIONS], "🟡 Lưu cục bộ (transactions_log.json)"
 
 def save_transactions_data(tx_list):
     try:
@@ -238,7 +238,16 @@ def save_transactions_data(tx_list):
         try:
             rows = [["date", "ticker", "asset_type", "action", "quantity", "price", "fee", "note"]]
             for t in tx_list:
-                rows.append([t["date"], t["ticker"], t["asset_type"], t["action"], float(t["quantity"]), float(t["price"]), float(t.get("fee", 0.0)), t.get("note", "")])
+                rows.append([
+                    str(t.get("date", "")),
+                    str(t.get("ticker", "")).upper().strip(),
+                    str(t.get("asset_type", "Cổ phiếu trực tiếp")),
+                    str(t.get("action", "MUA")).upper().strip(),
+                    float(t.get("quantity", 0.0)),
+                    float(t.get("price", 0.0)),
+                    float(t.get("fee", 0.0)),
+                    str(t.get("note", ""))
+                ])
             ws.clear()
             ws.update("A1", rows)
             return True
@@ -251,16 +260,10 @@ def save_transactions_data(tx_list):
 # ==========================================
 @st.cache_data(ttl=300)
 def fetch_price_history(symbol: str, days: int = 365) -> pd.DataFrame:
-    """
-    Tự động phân luồng:
-    - Nếu là VNINDEX / VN30: Gọi cổng 'ohlcs/index' của DNSE -> Dự phòng cổng CafeF -> Dự phòng VNDirect.
-    - Nếu là Cổ phiếu / ETF: Gọi cổng 'ohlcs/stock' của DNSE -> Dự phòng cổng CafeF.
-    """
     end_ts = int(datetime.now().timestamp())
     start_ts = int((datetime.now() - timedelta(days=days)).timestamp())
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # LUỒNG 1: Cổng API DNSE (Tách riêng đường dẫn 'index' cho VNINDEX và 'stock' cho Cổ phiếu)
     endpoint_type = "index" if symbol in ["VNINDEX", "VN30", "HNX", "UPCOM"] else "stock"
     try:
         url_dnse = f"https://services.entrade.com.vn/chart-api/v2/ohlcs/{endpoint_type}?from={start_ts}&to={end_ts}&symbol={symbol}&resolution=1D"
@@ -283,7 +286,6 @@ def fetch_price_history(symbol: str, days: int = 365) -> pd.DataFrame:
     except Exception:
         pass
 
-    # LUỒNG 2: Cổng API CafeF Real-time (Không bao giờ chặn IP quốc tế của Streamlit Cloud)
     try:
         url_cafef = f"https://s.cafef.vn/Ajax/PageNew/DataHistory/PriceHistory.ashx?Symbol={symbol}&StartDate=&EndDate=&PageIndex=1&PageSize=150"
         resp_cf = requests.get(url_cafef, headers=headers, timeout=6)
@@ -308,7 +310,6 @@ def fetch_price_history(symbol: str, days: int = 365) -> pd.DataFrame:
     except Exception:
         pass
 
-    # LUỒNG 3: Cổng API VNDirect Dchart
     try:
         url_vnd = f"https://dchart-api.vndirect.com.vn/dchart/history?resolution=D&symbol={symbol}&from={start_ts}&to={end_ts}"
         resp_vnd = requests.get(url_vnd, headers=headers, timeout=6)
@@ -330,10 +331,9 @@ def fetch_price_history(symbol: str, days: int = 365) -> pd.DataFrame:
     except Exception:
         pass
 
-    # LUỒNG 4: Dự phòng cuối cùng nếu đứt toàn bộ kết nối mạng
     dates = pd.date_range(end=datetime.now(), periods=100, freq="B")
     base_prices = {
-        "VNINDEX": 1265.0, "TCB": 21600.0, "HPG": 21000.0,
+        "VNINDEX": 1741.6, "TCB": 21600.0, "HPG": 21000.0,
         "MBB": 19300.0, "ACB": 21000.0, "FUEVFVND": 31700.0, "E1VFVN30": 33600.0,
     }
     p_base = base_prices.get(symbol, 21000.0)
@@ -504,12 +504,14 @@ def evaluate_valuation_signal(ticker: str, pb: float, pe: float, roe: float, vni
 def compute_portfolio_from_transactions(tx_list: list, current_market_prices: dict, valuation_signals: dict) -> pd.DataFrame:
     holdings = {}
     for tx in tx_list:
-        ticker = tx["ticker"].upper().strip()
-        act = tx["action"].upper().strip()
-        qty = float(tx["quantity"])
-        price = float(tx["price"])
-        fee = float(tx.get("fee", 0.0))
-        a_type = tx.get("asset_type", "Cổ phiếu / ETF")
+        ticker = str(tx.get("ticker", "")).upper().strip()
+        if not ticker:
+            continue
+        act = str(tx.get("action", "MUA")).upper().strip()
+        qty = float(tx.get("quantity", 0.0) or 0.0)
+        price = float(tx.get("price", 0.0) or 0.0)
+        fee = float(tx.get("fee", 0.0) or 0.0)
+        a_type = str(tx.get("asset_type", "Cổ phiếu / ETF"))
 
         if ticker not in holdings:
             holdings[ticker] = {"asset_type": a_type, "qty": 0.0, "total_cost": 0.0}
@@ -614,7 +616,6 @@ with st.sidebar:
     zalo_user_id = st.text_input("Zalo Chat/User ID của bạn", value=default_user_id)
     zalo_webhook = st.text_input("Hoặc Zalo Webhook URL", value=default_webhook)
 
-# Tính toán VN-Index từ API thực tế đa luồng
 df_vni = fetch_price_history("VNINDEX", days=365)
 vni_current = float(df_vni["close"].iloc[-1])
 
@@ -680,12 +681,17 @@ for ticker, meta in ASSET_VALUATION_META.items():
 
 df_all_valuation = pd.DataFrame(all_assets_rows)
 df_portfolio_live = compute_portfolio_from_transactions(st.session_state.tx_state, market_prices_map, valuation_signals)
-live_total_value = df_portfolio_live["Giá Trị Hiện Tại (₫)"].sum() if not df_portfolio_live.empty else 14935000.0
-live_total_cost = df_portfolio_live["Tổng Vốn Gốc (₫)"].sum() if not df_portfolio_live.empty else 11089342.0
+live_total_value = df_portfolio_live["Giá Trị Hiện Tại (₫)"].sum() if not df_portfolio_live.empty else 14509999.0
+live_total_cost = df_portfolio_live["Tổng Vốn Gốc (₫)"].sum() if not df_portfolio_live.empty else 10894342.0
 live_total_pnl = live_total_value - live_total_cost
 
+held_tickers = set(df_portfolio_live["Mã Tài Sản"].tolist()) if not df_portfolio_live.empty else set()
 buy_triggers = [r["Mã"] for r in all_assets_rows if "GOM MẠNH" in r["Lệnh Đề Xuất Tự Động"]]
-sell_triggers = [f"{r['Mã']} ({r['Lệnh Đề Xuất Tự Động']})" for r in all_assets_rows if "BÁN" in r["Lệnh Đề Xuất Tự Động"]]
+sell_triggers = [
+    f"{r['Mã']} ({r['Lệnh Đề Xuất Tự Động']})"
+    for r in all_assets_rows
+    if "BÁN" in r["Lệnh Đề Xuất Tự Động"] and r["Mã"] in held_tickers
+]
 
 zalo_msg = (
     f"📊 [BÁO CÁO ĐỊNH GIÁ & TÍCH SẢN TCINVEST]\n"
@@ -709,7 +715,7 @@ with st.sidebar:
 st.title("📊 Hệ Thống Quản Trị Tích Sản & Định Giá Tự Động (P/B • P/E • ROE)")
 st.markdown(
     f"**Tổng tài sản thực tế:** `{live_total_value:,.0f} ₫` "
-    f"*(Vốn gốc: `{live_total_cost:,.0f} ₫` | Lãi ròng: `+{live_total_pnl:,.0f} ₫`)* "
+    f"*(Vốn gốc: `{live_total_cost:,.0f} ₫` | Lãi ròng: `{live_total_pnl:+,.0f} ₫`)* "
     f"| **Bộ lọc Định giá:** `Tự động quét P/B, P/E, ROE toàn danh mục`"
 )
 
@@ -739,7 +745,7 @@ else:
         <h4>✅ HỆ THỐNG ĐỊNH GIÁ ỔN ĐỊNH (Độ lệch VNI từ đỉnh: {effective_drawdown:.2f}%) — TÍN HIỆU HIỆN TẠI:</h4>
         <ul>
             <li><b>Mã đang ở vùng RẺ (Ưu tiên gom 80/20):</b> <b>{', '.join(buy_triggers) if buy_triggers else 'Chưa có mã thủng đáy P/B, duy trì mua định kỳ HPG & FUEVFVND'}</b></li>
-            <li><b>Lệnh cơ cấu danh mục hiện tại:</b> <b>{', '.join(sell_triggers) if sell_triggers else 'Giữ nguyên TCB (P/B 1.15), TCEF, TCBF'}</b></li>
+            <li><b>Lệnh cơ cấu danh mục hiện tại:</b> <b>{', '.join(sell_triggers) if sell_triggers else 'Danh mục hiện tại đã gọn chuẩn (Giữ TCB, TCEF, TCBF)'}</b></li>
         </ul>
     </div>
     """, unsafe_allow_html=True)
@@ -757,8 +763,8 @@ st.divider()
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🎯 1. Bảng Quy Chiếu Định Giá (P/B • P/E • ROE) & Lệnh Tự Động",
     "🤖 2. Máy Trạm Đề Xuất Mua/Bán & Dự Trù Ngân Sách",
-    "💼 3. Quản Trị Danh Mục 14,93 Triệu (Kèm Tín Hiệu Định Giá)",
-    "📝 4. Nhật Ký Giao Dịch (Lưu Sheet 2)",
+    "💼 3. Quản Trị Danh Mục (Tự Tính Giá Vốn)",
+    "📝 4. Nhật Ký Giao Dịch (Cho Phép Sửa & Xóa Lệnh)",
     "✅ 5. Lộ Trình & Checklist (Lưu Sheet 1)"
 ])
 
@@ -835,7 +841,7 @@ with tab2:
 
     st.markdown("#### 🔔 1. Các Lệnh BÁN / CƠ CẤU Cần Thực Hiện Ngay (Theo Bảng Quy Chiếu)")
     for r in all_assets_rows:
-        if "BÁN" in r["Lệnh Đề Xuất Tự Động"] or "DỪNG MUA" in r["Lệnh Đề Xuất Tự Động"]:
+        if ("BÁN" in r["Lệnh Đề Xuất Tự Động"] and r["Mã"] in held_tickers) or "DỪNG MUA" in r["Lệnh Đề Xuất Tự Động"]:
             st.markdown(f"""
             <div class="signal-card">
                 <b>🔹 {r['Mã']} ({r['Tên Cổ Phiếu / Quỹ']}) — {r['Trạng Thái Định Giá']}</b><br/>
@@ -911,56 +917,136 @@ with tab3:
         fig_pie.update_layout(height=360, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig_pie, use_container_width=True)
 
+# ------------------------------------------
+# TAB 4: NHẬT KÝ GIAO DỊCH (CHO PHÉP CHỈNH SỬA TRỰC TIẾP, THÊM & XÓA DÒNG)
+# ------------------------------------------
 with tab4:
-    st.subheader("📝 Ghi Nhật Ký Mua / Bán Cổ Phiếu & Quỹ Mở (Tự Động Đồng Bộ Google Sheets - Sheet 2)")
+    st.subheader("📝 Quản Lý & Chỉnh Sửa Nhật Ký Giao Dịch (Tự Động Tính Lại Tổng Vốn & Lãi Suất)")
     st.caption(f"Trạng thái kết nối Sổ cái Giao dịch: **{st.session_state.get('tx_sync_msg', '')}**")
 
-    with st.form("add_transaction_form", clear_on_submit=True):
-        st.markdown("#### ➕ Nhập Giao Dịch Mới (Mua Lô Chẵn HPG / FUEVFVND, Mua TCBF định kỳ hoặc Bán TCFF)")
-        f_col1, f_col2, f_col3, f_col4 = st.columns(4)
-        with f_col1:
-            tx_date = st.date_input("Ngày giao dịch", value=datetime.now())
-            tx_action = st.selectbox("Loại lệnh", ["MUA", "BÁN"])
-        with f_col2:
-            tx_ticker = st.selectbox("Mã CK / Quỹ", ["HPG", "FUEVFVND", "ACB", "MBB", "TCBF", "E1VFVN30", "TCB", "TCEF", "TCFF"])
-            tx_type = st.selectbox("Nhóm tài sản", ["Cổ phiếu trực tiếp", "Quỹ ETF Tăng trưởng", "Quỹ mở trái phiếu", "Quỹ mở cổ phiếu", "Quỹ mở ngắn hạn"])
-        with f_col3:
-            default_p = float(market_prices_map.get(tx_ticker, 21000.0))
-            tx_qty = st.number_input("Số lượng (CP / CCQ)", min_value=0.01, max_value=100000.0, value=100.0, step=10.0)
-            tx_price = st.number_input("Giá khớp lệnh / NAV (₫)", min_value=100.0, max_value=500000.0, value=default_p, step=100.0)
-        with f_col4:
-            tx_fee = st.number_input("Phí giao dịch / Thuế (₫)", min_value=0.0, max_value=500000.0, value=0.0, step=1000.0)
-            tx_note = st.text_input("Ghi chú đợt mua/bán", placeholder="VD: Mua 100 CP HPG khi P/B = 1.48")
+    with st.expander("➕ Nhập Nhanh Giao Dịch Mới Bằng Biểu Mẫu", expanded=False):
+        with st.form("add_transaction_form", clear_on_submit=True):
+            f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+            with f_col1:
+                tx_date = st.date_input("Ngày giao dịch", value=datetime.now())
+                tx_action = st.selectbox("Loại lệnh", ["MUA", "BÁN"])
+            with f_col2:
+                tx_ticker = st.selectbox("Mã CK / Quỹ", ["HPG", "FUEVFVND", "ACB", "MBB", "TCBF", "E1VFVN30", "TCB", "TCEF", "TCFF"])
+                tx_type = st.selectbox("Nhóm tài sản", ["Cổ phiếu trực tiếp", "Quỹ ETF Tăng trưởng", "Quỹ mở trái phiếu", "Quỹ mở cổ phiếu", "Quỹ mở ngắn hạn"])
+            with f_col3:
+                default_p = float(market_prices_map.get(tx_ticker, 21000.0))
+                tx_qty = st.number_input("Số lượng (CP / CCQ)", min_value=0.01, max_value=100000.0, value=100.0, step=10.0)
+                tx_price = st.number_input("Giá khớp lệnh / NAV (₫)", min_value=100.0, max_value=500000.0, value=default_p, step=100.0)
+            with f_col4:
+                tx_fee = st.number_input("Phí giao dịch / Thuế (₫)", min_value=0.0, max_value=500000.0, value=0.0, step=1000.0)
+                tx_note = st.text_input("Ghi chú đợt mua/bán", placeholder="VD: Mua 100 CP HPG giá 21.000đ")
 
-        submitted = st.form_submit_button("💾 Lưu Giao Dịch & Cập Nhật Lại Giá Vốn Trung Bình", use_container_width=True)
-        if submitted:
-            new_tx = {
-                "date": tx_date.strftime("%Y-%m-%d"),
-                "ticker": tx_ticker,
-                "asset_type": tx_type,
-                "action": tx_action,
-                "quantity": float(tx_qty),
-                "price": float(tx_price),
-                "fee": float(tx_fee),
-                "note": tx_note
-            }
-            st.session_state.tx_state.append(new_tx)
-            ok_sheet = save_transactions_data(st.session_state.tx_state)
+            submitted = st.form_submit_button("➕ Thêm Vào Bảng Nhật Ký", use_container_width=True)
+            if submitted:
+                new_tx = {
+                    "date": tx_date.strftime("%Y-%m-%d"),
+                    "ticker": tx_ticker,
+                    "asset_type": tx_type,
+                    "action": tx_action,
+                    "quantity": float(tx_qty),
+                    "price": float(tx_price),
+                    "fee": float(tx_fee),
+                    "note": tx_note
+                }
+                st.session_state.tx_state.append(new_tx)
+                ok_sheet = save_transactions_data(st.session_state.tx_state)
+                if ok_sheet:
+                    st.session_state.tx_sync_msg = "🟢 Đã lưu vĩnh viễn vào Sheet 'Transactions' trên Google Sheets!"
+                st.success(f"Đã thêm lệnh {tx_action} {tx_qty:,.2f} {tx_ticker} tại giá {tx_price:,.0f} ₫!")
+                st.rerun()
+
+    st.markdown("#### ✏️ Bảng Chỉnh Sửa Trực Tiếp Các Lệnh Đã Nhập (Sửa Số Liệu, Thêm Dòng Hoặc Xóa Lệnh Nhập Sai)")
+    st.info(
+        "💡 **Cách chỉnh sửa hoặc xóa lệnh nhập sai:**\n"
+        "1. **Sửa số liệu:** Nhấp đúp chuột trực tiếp vào ô **Số lượng**, **Giá khớp**, **Loại lệnh (MUA/BÁN)** hoặc **Mã CK** trong bảng dưới đây để sửa lại.\n"
+        "2. **Xóa dòng nhập nhầm:** Tích chọn ô vuông ở bên trái dòng bị sai $\\rightarrow$ Nhấn biểu tượng **Thùng rác (Delete)** ở góc trên bên phải bảng.\n"
+        "3. **Hoàn tất:** Nhấn nút **'💾 Lưu Thay Đổi Bảng Giao Dịch & Cập Nhật Lại Danh Mục'** bên dưới để hệ thống tự tính lại Tổng vốn và Lãi/Lỗ."
+    )
+
+    df_tx_edit = pd.DataFrame(st.session_state.tx_state)
+    if df_tx_edit.empty:
+        df_tx_edit = pd.DataFrame(columns=["date", "ticker", "asset_type", "action", "quantity", "price", "fee", "note"])
+
+    edited_df = st.data_editor(
+        df_tx_edit,
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=False,
+        key="tx_table_editor",
+        column_config={
+            "date": st.column_config.TextColumn("Ngày GD (YYYY-MM-DD)", required=True, default=datetime.now().strftime("%Y-%m-%d")),
+            "ticker": st.column_config.SelectboxColumn(
+                "Mã CK / Quỹ",
+                options=["TCB", "HPG", "ACB", "MBB", "FUEVFVND", "E1VFVN30", "TCEF", "TCBF", "TCFF"],
+                required=True,
+                default="HPG"
+            ),
+            "asset_type": st.column_config.SelectboxColumn(
+                "Nhóm Tài Sản",
+                options=["Cổ phiếu Ngân hàng", "Cổ phiếu trực tiếp", "Quỹ ETF Tăng trưởng", "Quỹ ETF Tiêu chuẩn", "Quỹ mở cổ phiếu", "Quỹ mở trái phiếu", "Quỹ mở ngắn hạn"],
+                required=True,
+                default="Cổ phiếu trực tiếp"
+            ),
+            "action": st.column_config.SelectboxColumn(
+                "Loại Lệnh",
+                options=["MUA", "BÁN"],
+                required=True,
+                default="MUA"
+            ),
+            "quantity": st.column_config.NumberColumn(
+                "Số Lượng (CP/CCQ)",
+                min_value=0.01, max_value=1000000.0, step=1.0, format="%.2f", required=True, default=100.0
+            ),
+            "price": st.column_config.NumberColumn(
+                "Giá Khớp / NAV (₫)",
+                min_value=1.0, max_value=10000000.0, step=100.0, format="%.0f", required=True, default=21000.0
+            ),
+            "fee": st.column_config.NumberColumn(
+                "Phí / Thuế (₫)",
+                min_value=0.0, max_value=5000000.0, step=500.0, format="%.0f", required=True, default=0.0
+            ),
+            "note": st.column_config.TextColumn("Ghi Chú", default="")
+        }
+    )
+
+    btn_col1, btn_col2 = st.columns([3, 1])
+    with btn_col1:
+        if st.button("💾 Lưu Thay Đổi Bảng Giao Dịch & Cập Nhật Lại Danh Mục", type="primary", use_container_width=True):
+            cleaned_records = []
+            for _, r in edited_df.iterrows():
+                if pd.isna(r.get("ticker")) or str(r.get("ticker", "")).strip() == "":
+                    continue
+                cleaned_records.append({
+                    "date": str(r.get("date", datetime.now().strftime("%Y-%m-%d"))).strip(),
+                    "ticker": str(r.get("ticker", "HPG")).upper().strip(),
+                    "asset_type": str(r.get("asset_type", "Cổ phiếu trực tiếp")),
+                    "action": str(r.get("action", "MUA")).upper().strip(),
+                    "quantity": float(r.get("quantity", 0.0) or 0.0),
+                    "price": float(r.get("price", 0.0) or 0.0),
+                    "fee": float(r.get("fee", 0.0) or 0.0),
+                    "note": "" if pd.isna(r.get("note")) else str(r.get("note", ""))
+                })
+            st.session_state.tx_state = cleaned_records
+            ok_sheet = save_transactions_data(cleaned_records)
             if ok_sheet:
-                st.session_state.tx_sync_msg = "🟢 Đã lưu vĩnh viễn vào Sheet 'Transactions' trên Google Sheets!"
-            st.success(f"Đã ghi nhận lệnh {tx_action} {tx_qty:,.2f} {tx_ticker} tại giá {tx_price:,.0f} ₫!")
+                st.session_state.tx_sync_msg = "🟢 Đã cập nhật bảng chỉnh sửa vào Sheet 'Transactions' trên Google Sheets!"
+            else:
+                st.session_state.tx_sync_msg = "🟡 Đã lưu bảng chỉnh sửa vào bộ nhớ ứng dụng!"
+            st.success("✅ Đã lưu toàn bộ chỉnh sửa và tính toán lại Tổng vốn & Lãi suất danh mục!")
             st.rerun()
 
-    df_tx_history = pd.DataFrame(st.session_state.tx_state)
-    if not df_tx_history.empty:
-        df_tx_history["Tổng Giá Trị Lệnh (₫)"] = df_tx_history["quantity"] * df_tx_history["price"]
-        st.dataframe(
-            df_tx_history.style.format({
-                "quantity": "{:,.2f}", "price": "{:,.0f}",
-                "fee": "{:,.0f}", "Tổng Giá Trị Lệnh (₫)": "{:,.0f}"
-            }),
-            use_container_width=True, hide_index=True
-        )
+    with btn_col2:
+        if st.button("🔄 Khôi Phục 4 Tài Sản Gốc Ban Đầu", use_container_width=True):
+            reset_list = [dict(x) for x in DEFAULT_TRANSACTIONS]
+            st.session_state.tx_state = reset_list
+            save_transactions_data(reset_list)
+            st.warning("Đã khôi phục về đúng 4 khoản đầu tư gốc ban đầu (TCB, TCEF, TCBF, TCFF)!")
+            st.rerun()
 
 with tab5:
     st.subheader("✅ Bảng Lộ Trình Chi Tiết & Checklist Thực Thi (Đồng bộ Google Sheets - Sheet 1)")
